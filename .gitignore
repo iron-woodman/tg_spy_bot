@@ -1,0 +1,18 @@
+# Секреты и настройки
+.env
+*.txt
+!requirements.txt
+
+# Сессии Telethon
+*.session
+*.session-journal
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+
+# Логи
+logs/
