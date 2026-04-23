@@ -1,21 +1,19 @@
 import asyncio
 import os
-import re
-from typing import List, Optional
-from urllib.parse import urlparse
-
+import sys
+from typing import List
+from dotenv import load_dotenv
+from loguru import logger
 import aiofiles
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.client.default import DefaultBotProperties
-from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from dotenv import load_dotenv
-from loguru import logger
 from telethon import TelegramClient, events
+from telethon.network.connection.tcpabridged import ConnectionTcpAbridged
 
 load_dotenv()
 
@@ -33,35 +31,16 @@ SLOVAR_FILE = os.getenv("SLOVAR_FILE", "slovar1.txt")
 MINSLOVAR_FILE = os.getenv("MINSLOVAR_FILE", "minslovar1.txt")
 KOLSLOV_FILE = os.getenv("KOLSLOV_FILE", "kolslov.txt")
 
-USE_PROXY = os.getenv("USE_PROXY", "false").lower() == "true"
-PROXY_URL = os.getenv("PROXY_URL", "")
+# Инициализация клиентов
+client = TelegramClient(
+    SESSION_NAME, 
+    API_ID, 
+    API_HASH,
+    connection=ConnectionTcpAbridged
+)
 
-
-def parse_proxy(url: str) -> tuple:
-    """Парсит URL прокси в формат для Telethon: (type, host, port, username, password)"""
-    if not url:
-        return None
-    
-    try:
-        # Добавляем схему по умолчанию, если нет
-        if not url.startswith(("socks5://", "socks4://", "http://", "https://")):
-            if ":" in url and "://" not in url:
-                url = "socks5://" + url
-            else:
-                url = "socks5://" + url
-        
-        parsed = urlparse(url)
-        proxy_type = parsed.scheme
-        hostname = parsed.hostname or parsed.netloc.split(":")[0]
-        port = parsed.port or (int(parsed.netloc.split(":")[1]) if ":" in parsed.netloc else 1080)
-        
-        username = parsed.username
-        password = parsed.password
-        
-        return (proxy_type, hostname, port, username, password)
-    except Exception as e:
-        logger.error(f"Ошибка парсинга прокси: {e}")
-        return None
+bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+dp = Dispatcher(storage=MemoryStorage())
 
 # FSM Состояния
 class BotStates(StatesGroup):
@@ -70,29 +49,26 @@ class BotStates(StatesGroup):
     add_minword = State()
     set_threshold = State()
 
-
 class KeywordManager:
-    """Класс для управления списками слов и настройками."""
     def __init__(self):
         self.keywords: List[str] = []
         self.minwords: List[str] = []
         self.threshold: int = 1
 
     async def load_all(self):
-        """Асинхронная загрузка данных из файлов."""
         try:
             if os.path.exists(SLOVAR_FILE):
-                async with aiofiles.open(SLOVAR_FILE, mode='r', encoding='utf-8') as f:
+                async with aiofiles.open(SLOVAR_FILE, 'r', encoding='utf-8') as f:
                     content = await f.read()
                     self.keywords = [line.strip() for line in content.splitlines() if line.strip()]
             
             if os.path.exists(MINSLOVAR_FILE):
-                async with aiofiles.open(MINSLOVAR_FILE, mode='r', encoding='utf-8') as f:
+                async with aiofiles.open(MINSLOVAR_FILE, 'r', encoding='utf-8') as f:
                     content = await f.read()
                     self.minwords = [line.strip() for line in content.splitlines() if line.strip()]
 
             if os.path.exists(KOLSLOV_FILE):
-                async with aiofiles.open(KOLSLOV_FILE, mode='r', encoding='utf-8') as f:
+                async with aiofiles.open(KOLSLOV_FILE, 'r', encoding='utf-8') as f:
                     line = await f.read()
                     self.threshold = int(line.strip()) if line.strip() else 1
             
@@ -101,60 +77,30 @@ class KeywordManager:
             logger.error(f"Ошибка при загрузке данных: {e}")
 
     async def save_keywords(self):
-        async with aiofiles.open(SLOVAR_FILE, mode='w', encoding='utf-8') as f:
+        async with aiofiles.open(SLOVAR_FILE, 'w', encoding='utf-8') as f:
             await f.write("\n".join(self.keywords))
 
     async def save_minwords(self):
-        async with aiofiles.open(MINSLOVAR_FILE, mode='w', encoding='utf-8') as f:
+        async with aiofiles.open(MINSLOVAR_FILE, 'w', encoding='utf-8') as f:
             await f.write("\n".join(self.minwords))
 
     async def save_threshold(self):
-        async with aiofiles.open(KOLSLOV_FILE, mode='w', encoding='utf-8') as f:
+        async with aiofiles.open(KOLSLOV_FILE, 'w', encoding='utf-8') as f:
             await f.write(str(self.threshold))
 
     def check_message(self, text: str) -> bool:
-        """Проверка сообщения на соответствие фильтрам."""
         if not text:
             return False
-        
         text_lower = text.lower()
-        
-        # Проверка на минус-слова (сразу выходим, если нашли)
         for mw in self.minwords:
             if mw.lower() in text_lower:
                 return False
-
-        # Подсчет вхождений ключевых слов
         count = sum(1 for kw in self.keywords if kw.lower() in text_lower)
         return count >= self.threshold
 
-# Инициализация с прокси (если включен)
 manager = KeywordManager()
 
-if USE_PROXY and PROXY_URL:
-    logger.info(f"Используем прокси: {PROXY_URL}")
-    
-    proxy_tuple = parse_proxy(PROXY_URL)
-    
-    # Aiogram session с прокси
-    session = AiohttpSession(proxy=PROXY_URL)
-    bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode="HTML"), session=session)
-    
-    # Telethon с прокси
-    client = TelegramClient(
-        SESSION_NAME, API_ID, API_HASH,
-        proxy=proxy_tuple,
-        timeout=30
-    )
-else:
-    logger.info("Прокси не используется")
-    bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
-    client = TelegramClient(SESSION_NAME, API_ID, API_HASH, timeout=30)
-
-dp = Dispatcher(storage=MemoryStorage())
-
 # ================== AIOGRAM HANDLERS ==================
-
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.set_state(BotStates.auth)
@@ -202,8 +148,6 @@ async def show_settings(message: types.Message):
     builder.add(types.InlineKeyboardButton(text="⚙️ Изменить порог слов", callback_data="set_thr"))
     await message.answer(f"📊 <b>Текущие настройки:</b>\n\nПорог срабатывания: {manager.threshold} слов(а)", reply_markup=builder.as_markup())
 
-# ================== CALLBACKS ==================
-
 @dp.callback_query(F.data.startswith("del_kw_"))
 async def del_keyword(call: types.CallbackQuery):
     idx = int(call.data.split("_")[-1])
@@ -242,8 +186,6 @@ async def prompt_set_thr(call: types.CallbackQuery, state: FSMContext):
     await call.message.answer("Введите число (сколько слов должно совпасть):")
     await call.answer()
 
-# ================== FSM INPUTS ==================
-
 @dp.message(StateFilter(BotStates.add_keyword))
 async def process_add_kw(message: types.Message, state: FSMContext):
     manager.keywords.append(message.text)
@@ -271,90 +213,70 @@ async def process_set_thr(message: types.Message, state: FSMContext):
     else:
         await message.answer("⚠ Пожалуйста, введите число.")
 
-# ================== TELETHON EVENTS ==================
-
-@client.on(events.NewMessage())
+# ================== TELETHON HANDLER ==================
+@client.on(events.NewMessage)
 async def event_handler(event):
     if not event.message or not event.message.message:
         return
-        
     text = event.message.message
     if manager.check_message(text):
         try:
-            # Пересылаем сообщение в целевую группу
             await client.forward_messages(TARGET_GROUP, event.message)
-            logger.info(f"Найдено совпадение! Сообщение переслано в {TARGET_GROUP}")
+            logger.info(f"✅ Переслано сообщение из {event.chat_id}")
         except Exception as e:
-            logger.error(f"Ошибка при пересылке: {e}")
+            logger.error(f"❌ Ошибка пересылки: {e}")
 
 # ================== MAIN ==================
-
-async def main_old():
-    logger.info("Запуск бота...")
-    
-    # Загружаем данные
-    await manager.load_all()
-
-    # Запускаем Telethon
-    try:
-        await client.start()
-        logger.info("Telethon клиент авторизован")
-    except Exception as e:
-        logger.critical(f"Ошибка авторизации Telethon: {e}")
-        return
-
-    # Запускаем polling aiogram
-    logger.info("Запуск Telegram Bot API...")
-    polling_task = asyncio.create_task(dp.start_polling(bot))
-
-    # Работаем, пока Telethon не отключится
-    try:
-        await client.run_until_disconnected()
-    finally:
-        await polling_task
-
-
 async def main():
-    logger.info("Запуск бота...")
-    await asyncio.sleep(2)
+    logger.info("🚀 Запуск бота...")
     
-    # Загружаем данные
     await manager.load_all()
-
-    # Запускаем Telethon с обработкой ошибок
+    
+    # Подключаем Telethon с таймаутом
+    logger.info("📡 Подключаем Telethon...")
     try:
-        # Важно: используем существующую сессию, не создаём новую
-        await client.start()
-        logger.info("Telethon клиент авторизован")
+        # Устанавливаем таймаут на подключение
+        await asyncio.wait_for(client.connect(), timeout=15)
+        logger.info("✅ Client connected")
         
-        # Проверяем подключение
+        # Проверяем авторизацию
+        if not await client.is_user_authorized():
+            logger.info("🔐 Требуется авторизация. Введите номер телефона.")
+            await client.start()
+        
         me = await client.get_me()
-        logger.info(f"Авторизован как: {me.first_name} (@{me.username})")
+        logger.info(f"✅ Telethon: {me.first_name} (@{me.username})")
         
-        # Проверяем доступ к целевой группе
         if TARGET_GROUP:
             try:
                 entity = await client.get_entity(int(TARGET_GROUP))
-                logger.info(f"Целевая группа найдена: {entity.title}")
+                logger.info(f"✅ Целевая группа: {entity.title}")
             except Exception as e:
-                logger.error(f"Не удалось найти целевую группу {TARGET_GROUP}: {e}")
+                logger.error(f"⚠️ Группа не найдена: {e}")
                 
-    except Exception as e:
-        logger.critical(f"Ошибка авторизации Telethon: {e}")
-        logger.critical("Проверьте файл сессии и подключение к интернету")
+    except asyncio.TimeoutError:
+        logger.error("❌ Таймаут подключения Telethon (15 секунд)")
+        logger.error("Проверьте соединение с интернетом и настройки прокси")
         return
-
-    # Запускаем polling aiogram
-    logger.info("Запуск Telegram Bot API...")
+    except Exception as e:
+        logger.error(f"❌ Ошибка Telethon: {type(e).__name__}: {e}")
+        return
     
-    # Запускаем оба клиента параллельно
+    logger.info("🤖 Запуск Aiogram...")
+    
+    # Запускаем обе задачи
     await asyncio.gather(
         dp.start_polling(bot),
         client.run_until_disconnected()
     )
 
 if __name__ == "__main__":
+    # Создаём новый event loop и используем его
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        logger.info("Бот остановлен")
+        loop.run_until_complete(main())
+    except KeyboardInterrupt:
+        logger.info("👋 Бот остановлен")
+    finally:
+        loop.close()

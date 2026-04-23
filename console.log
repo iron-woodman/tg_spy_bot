@@ -1,0 +1,8 @@
+(venv) PS C:\projects\python\telegram\tg_spy_bot> python bot.py
+2026-04-22 21:44:33.238 | INFO     | __main__:main:247 - Запуск бота...
+2026-04-22 21:44:33.245 | INFO     | __main__:load_all:72 - Данные загружены: 50 кл. слов, 34 мин. слов, порог: 1
+Attempt 1 at connecting failed: TimeoutError: 
+Attempt 2 at connecting failed: TimeoutError: 
+Attempt 3 at connecting failed: TimeoutError: 
+Attempt 4 at connecting failed: TimeoutError: 
+Attempt 5 at connecting failed: TimeoutError: 
