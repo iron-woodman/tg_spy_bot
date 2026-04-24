@@ -1,0 +1,19 @@
+[Unit]
+Description=Telegram Spy Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/bot/tg_spy_bot
+ExecStart=/root/bot/tg_spy_bot/venv/bin/python3 /root/bot/tg_spy_bot/bot_final.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+KillMode=process
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
